@@ -1,28 +1,22 @@
-import {Args, Command, Flags} from '@oclif/core'
-import {ArtifactStorage, Artifact} from '@xgsd/artifact-sdk'
-import {existsSync, readdirSync, statSync} from 'node:fs'
-import {mkdir, readFile, writeFile} from 'node:fs/promises'
-import {dirname, join, relative, resolve} from 'node:path'
+import {Command, Flags} from '@oclif/core'
+import {Artifact, ArtifactStorage} from '@xgsd/artifact-sdk'
+import {existsSync, readdirSync, statSync} from 'fs'
+import {mkdir, readFile, writeFile} from 'fs/promises'
+import {dirname, join, relative, resolve} from 'path'
 import {runPool} from '../util.js'
+import {sha256File} from './fetch.js'
 
 export default class Push extends Command {
-  static override args = {}
   static override description = 'push local artifacts to remote'
-  static override examples = ['<%= config.bin %> <%= command.id %>']
-  static override flags = {
-    // flag with no value (-f, --force)
-    force: Flags.boolean({char: 'f'}),
-    // flag with a value (-n, --name=VALUE)
 
+  static override flags = {
     cwd: Flags.string({
       char: 'c',
-      description: 'current working directory',
       default: process.cwd(),
     }),
 
     dry: Flags.boolean({
       char: 'd',
-      description: 'view what changes will be made',
       default: false,
     }),
 
@@ -37,111 +31,135 @@ export default class Push extends Command {
       env: 'SIGN_API_TOKEN',
       required: true,
     }),
+
+    kind: Flags.string(),
+    category: Flags.string(),
+    type: Flags.string(),
+
+    limit: Flags.integer({char: 'n'}),
   }
 
   artifact!: ArtifactStorage
 
-  public async loadManifest(path: string) {
-    const content = await readFile(path, 'utf-8')
-    const manifest = JSON.parse(content)
-    const cwd = dirname(path)
-
-    manifest.artifacts = manifest.artifacts.map((a: Artifact) => {
-      const path = existsSync(join(cwd, a.key)) ? a.key : null
-
-      return {
-        key: a.key,
-        path,
-      }
-    })
-
-    return manifest
+  async loadLocalIndex(path: string) {
+    return JSON.parse(await readFile(path, 'utf-8'))
   }
 
-  public async uploadArtifacts(cwd: string, uploads: any[], dry?: boolean) {
+  async uploadArtifacts(cwd: string, pending: any[], dry?: boolean) {
+    const successful = new Map<string, Artifact>()
     let completed = 0
     const started = Date.now()
 
-    if (uploads.length === 0) {
-      this.log(`Nothing to upload...`)
-      return
+    if (!pending.length) {
+      this.log(`Nothing to upload ...`)
+      return successful
     }
 
-    await runPool(uploads, async (item: {key: string; path: string}, workerId: number, position: number) => {
-      this.log(`[worker ${workerId}] (${position}/${uploads.length}) uploading ${item.path}`)
+    console.log(cwd)
 
-      if (item.key) {
-        return
-      }
+    await runPool(pending, async (item: any, workerId: any, position: any) => {
+      const filePath = join(cwd, item.key)
 
-      item.key = item.path
-      const remoteKey = `crawldb:${item.key}`
+      const sizeMb = ((item.size ?? 0) / 1024 / 1024).toFixed(2)
+      this.log(`[worker ${workerId}] (${position}/${pending.length}) uploading ${item.key} (${sizeMb} MB)`)
 
       try {
-        if (dry !== true) {
-          await this.artifact.uploadFile(item.path, remoteKey)
+        if (!dry) {
+          await this.artifact.uploadFile(filePath, `crawldb:${item.key}`)
         }
 
         completed++
 
-        this.log(`[worker ${workerId}] ✓ ${item.key} (${completed}/${uploads.length})`)
-      } catch (error: any) {
-        this.log(`[worker ${workerId}] ✗ ${item.key} - ${error?.message ?? 'unknown error'}`)
+        successful.set(item.key, {
+          ...item,
+          remote: `crawldb:${item.key}`,
+        })
+
+        this.log(`[worker ${workerId}] ✓ ${item.key} (${completed}/${pending.length})`)
+      } catch (err: any) {
+        this.log(`[worker ${workerId}] ✗ ${item.key} - ${err?.message ?? 'error'}`)
       }
     })
 
     const duration = ((Date.now() - started) / 1000).toFixed(2)
-    this.log(`Upload complete (${completed}/${uploads.length}) in ${duration}s`)
+    this.log(`Upload complete (${successful.size}/${pending.length}) in ${duration}s`)
+
+    return successful
   }
 
-  public async run(): Promise<void> {
-    const {args, flags} = await this.parse(Push)
+  async run(): Promise<void> {
+    const {flags} = await this.parse(Push)
 
-    const absoluteBasePath = resolve(flags.cwd)
+    const cwd = resolve(flags.cwd)
+    this.artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
 
-    const artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
-    this.artifact = artifact
-
-    const manifestPath = join(absoluteBasePath, 'artifact.manifest.json')
-
-    if (!existsSync(manifestPath)) {
-      this.error(`Manifest not found, use "$ art init".`)
+    const indexPath = join(cwd, 'artifacts.index.json')
+    if (!existsSync(indexPath)) {
+      this.error(`Index not found. Run init first.`)
     }
 
-    const artifactPath = join(absoluteBasePath, 'artifacts')
-    await mkdir(artifactPath, {recursive: true})
+    const index = await this.loadLocalIndex(indexPath)
+    const artifactDir = join(cwd, 'artifacts')
 
-    const manifest = await this.loadManifest(manifestPath)
+    const localFiles = readdirSync(artifactDir, {recursive: true})
+      .map((p) => join(artifactDir, String(p)))
+      .filter((p) => statSync(p).isFile())
+      .map((p) => relative(cwd, p).replace(/\\/g, '/'))
 
-    const localFiles = new Set(
-      readdirSync(artifactPath, {recursive: true})
-        .map((p: any) => join(artifactPath, p))
-        .filter((p: any) => statSync(p).isFile())
-        .map((p) => relative(flags.cwd, p)),
-    )
+    // --------------------------------------------------
+    // BUILD PUSH LIST (INVERTED LOGIC)
+    // --------------------------------------------------
+    const pendingUpload = localFiles
+      .map((key) => {
+        const meta = index.artifacts?.[key]
 
-    const artifactPaths = new Set(manifest.artifacts.map((a: any) => a.path).filter(Boolean))
-    const pendingUpload = [...localFiles]
-      .filter((path) => !artifactPaths.has(path))
-      .map((path) => ({
-        key: null,
-        path,
-      }))
+        return {
+          key,
+          size: statSync(join(cwd, key)).size,
+          checksum: sha256File(join(cwd, key)),
+          meta,
+        }
+      })
+      .filter((item) => {
+        if (flags.category && item.meta?.category?.toLowerCase() !== flags.category.toLowerCase()) return false
+        if (flags.kind && item.meta?.kind?.toLowerCase() !== flags.kind.toLowerCase()) return false
+        if (flags.type && item.meta?.type?.toLowerCase() !== flags.type.toLowerCase()) return false
 
-    if (pendingUpload.length === 0) {
-      this.log(`Nothing to upload`)
+        if (item.checksum === item.meta?.checksum) return false
+
+        return true
+      })
+      .slice(0, flags.limit ?? undefined)
+
+    if (!pendingUpload.length) {
+      this.log(`Nothing to push!`)
       return
     }
 
-    this.log(`${pendingUpload.length} artifacts will be uploaded`)
-    await this.uploadArtifacts(join(flags.cwd, 'artifacts'), pendingUpload, flags.dry)
+    const totalSize = pendingUpload.reduce((a, b) => a + (b.size ?? 0), 0) / 1024 / 1024
 
-    manifest.artifacts = [...manifest.artifacts, ...pendingUpload].filter(Boolean)
-    manifest.total = manifest.artifacts.length
+    this.log(`${pendingUpload.length} artifacts will be uploaded (${totalSize.toFixed(2)} MB)`)
 
-    this.log(`Updating manifest ...`)
+    const successful = await this.uploadArtifacts(cwd, pendingUpload, flags.dry)
+
+    // --------------------------------------------------
+    // UPDATE INDEX AFTER SUCCESS
+    // --------------------------------------------------
+
+    for (const [key, item] of successful) {
+      index.artifacts[key] = {
+        ...index.artifacts?.[key],
+        size: item.size,
+        modified: new Date().toISOString(),
+        kind: item?.kind ?? 'artifact',
+        category: item?.category ?? 'unknown',
+        type: item?.type ?? null,
+      }
+    }
+
+    this.log(`Updating index ...`)
     if (!flags.dry) {
-      await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+      await writeFile(indexPath, JSON.stringify(index, null, 2))
     }
 
     this.log(`Push complete!`)

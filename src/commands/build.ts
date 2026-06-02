@@ -28,7 +28,7 @@ export default class Build extends Command {
   public async run(): Promise<void> {
     const {args, flags} = await this.parse(Build)
 
-    const artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
+    /*const artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
     const latest = await artifact.downloadManifest()
     const local = JSON.parse(await readFile('artifact.manifest.json', 'utf-8'))
 
@@ -38,8 +38,8 @@ export default class Build extends Command {
       const manifest = await artifact.publishManifest()
       this.log(`Finished, version: ${manifest.version}, artifacts: ${manifest.artifacts.length}.`)
       return
-    }
+    }*/
 
-    this.log(`Nothing to rebuild, used checksum ${local.checksum.artifacts.slice(0, 8)}.`)
+    //this.log(`Nothing to rebuild, used checksum ${local.checksum.artifacts.slice(0, 8)}.`)
   }
 }

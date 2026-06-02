@@ -2,7 +2,7 @@ import {Args, Command, Flags} from '@oclif/core'
 import {existsSync, readFileSync} from 'fs'
 import {mkdir, readFile, rm, writeFile} from 'fs/promises'
 import {dirname, join, relative, resolve} from 'path'
-import {Artifact, ArtifactManifest, ArtifactStorage} from '@xgsd/artifact-sdk'
+import {Artifact, ArtifactIndex, ArtifactStorage} from '@xgsd/artifact-sdk'
 
 export default class Init extends Command {
   static override args = {
@@ -38,78 +38,59 @@ export default class Init extends Command {
     }),
   }
 
-  public async loadManifest(path: string) {
+  artifact!: ArtifactStorage
+
+  public async loadLocalIndex(path: string) {
     const content = await readFile(path, 'utf-8')
     return JSON.parse(content)
   }
 
-  protected async buildManifest(artifact: ArtifactStorage, manifestPath: string) {
-    this.log(`Downloading remote manifest ...`)
-
-    const remote = (await artifact.downloadManifest()) as any
-    const manifest = {
-      version: remote.version,
-      previous: remote.previous,
-      generatedAt: remote.generatedAt,
-      total: remote.total,
-      cwd: dirname(manifestPath),
-      artifacts: remote.artifacts.map((a: Artifact) => {
-        const path = existsSync(join(this.config.dataDir, a.key)) ? a.key : null
-
-        return {
-          key: a.key,
-          path,
-        }
-      }),
-      checksum: remote.checksum,
+  async getRemoteIndex() {
+    try {
+      return await this.artifact.getIndex()
+    } catch {
+      return null
     }
-
-    await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
-
-    return manifest
   }
 
   public async run(): Promise<void> {
     const {args, flags} = await this.parse(Init)
 
     const absoluteBasePath = resolve(flags.cwd)
-    const artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
+    const indexPath = join(absoluteBasePath, 'artifacts.index.json')
 
-    const manifestPath = join(absoluteBasePath, 'artifact.manifest.json')
+    this.artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
 
-    if (flags.force && existsSync(manifestPath)) {
-      await rm(manifestPath)
-    }
-
-    let manifest: ArtifactManifest
-    let downloaded = false
-    if (!existsSync(manifestPath) || flags.remote) {
-      try {
-        manifest = await this.buildManifest(artifact, manifestPath)
-        downloaded = true
-      } catch {
-        this.error(`Cannot download latest manifest`)
-      }
+    let index: ArtifactIndex | null = null
+    if (existsSync(indexPath)) {
+      index = await this.loadLocalIndex(indexPath)
     } else {
-      manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as ArtifactManifest
+      index = await this.getRemoteIndex()
     }
 
-    manifest.generatedAt = new Date().toISOString()
-    manifest.artifacts = manifest.artifacts.map((a) => ({
-      key: a.key,
-      path: existsSync(join(flags.cwd, a.key)) ? a.key : null,
-    }))
-
-    if (downloaded) {
-      await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+    if (!index) {
+      this.error(`unable to obtain local or remote index`)
     }
 
-    const hasChanges = manifest.artifacts.some((a: any) => !a.path && !existsSync(join(flags.cwd, a.key)))
-
-    if (hasChanges) {
-      this.log(`There are artifacts waiting to be downloaded, use \"$ web fetch\".`)
+    const local = this.artifact.toLocalIndex(absoluteBasePath, index)
+    if (!existsSync(indexPath)) {
+      await local.save()
     }
 
-    this.log(`Initialisation complete.`)
+    let total = 0
+    const pending = local
+      .query((a) => !a.path || !existsSync(a.path))
+      .map((a) => {
+        total++
+        return a.size
+      })
+      .reduce((p, c) => 0 + p + c)
+
+    if (pending > 0) {
+      this.log(`You have ${total} downloads pending (${(pending / 1024 / 1024).toFixed(2)} MB)`)
+    }
+
+    await local.save()
+    this.log('Everything complete!')
   }
 }

@@ -11,7 +11,7 @@
     "@oclif/core": "^4",
     "@oclif/plugin-help": "^6",
     "@oclif/plugin-plugins": "^5",
-    "@xgsd/artifact-sdk": "0.1.3"
+    "@xgsd/artifact-sdk": "../artifact-sdk"
   },
   "devDependencies": {
     "@eslint/compat": "^1",
