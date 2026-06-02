@@ -165,7 +165,7 @@ export default class Fetch extends Command {
 
     this.log(`Updating manifest ...`)
     if (!flags.dry) {
-      await index.save()
+      await index.save(indexPath)
     }
 
     this.log(`Fetch complete!`)

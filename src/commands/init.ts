@@ -73,9 +73,6 @@ export default class Init extends Command {
     }
 
     const local = this.artifact.toLocalIndex(absoluteBasePath, index)
-    if (!existsSync(indexPath)) {
-      await local.save()
-    }
 
     let total = 0
     const pending = local
@@ -90,7 +87,7 @@ export default class Init extends Command {
       this.log(`You have ${total} downloads pending (${(pending / 1024 / 1024).toFixed(2)} MB)`)
     }
 
-    await local.save()
+    await local.save(indexPath)
     this.log('Everything complete!')
   }
 }

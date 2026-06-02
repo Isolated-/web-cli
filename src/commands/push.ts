@@ -93,8 +93,6 @@ export default class Push extends Command {
       this.error(`Index not found. Run init first.`)
     }
 
-    this.log(`Index loaded from ${indexPath}`)
-
     const local = await this.loadLocalIndex(indexPath)
     const index = this.artifact.toLocalIndex(cwd, local)
     const artifactDir = join(cwd, 'artifacts')
@@ -116,7 +114,7 @@ export default class Push extends Command {
         return {
           key,
           size: statSync(join(cwd, key)).size,
-          checksum: sha256File(key),
+          checksum: sha256File(join(cwd, key)),
           meta,
         }
       })
@@ -155,7 +153,7 @@ export default class Push extends Command {
 
     this.log(`Updating index ...`)
     if (!flags.dry) {
-      await index.save()
+      await index.save(indexPath)
     }
 
     this.log(`Push complete!`)
