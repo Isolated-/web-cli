@@ -93,6 +93,8 @@ export default class Push extends Command {
       this.error(`Index not found. Run init first.`)
     }
 
+    this.log(`Index loaded from ${indexPath}`)
+
     const local = await this.loadLocalIndex(indexPath)
     const index = this.artifact.toLocalIndex(cwd, local)
     const artifactDir = join(cwd, 'artifacts')
