@@ -55,8 +55,6 @@ export default class Push extends Command {
       return successful
     }
 
-    console.log(cwd)
-
     await runPool(pending, async (item: any, workerId: any, position: any) => {
       const filePath = join(cwd, item.key)
 
@@ -70,10 +68,7 @@ export default class Push extends Command {
 
         completed++
 
-        successful.set(item.key, {
-          ...item,
-          remote: `crawldb:${item.key}`,
-        })
+        successful.set(item.key, item.meta)
 
         this.log(`[worker ${workerId}] ✓ ${item.key} (${completed}/${pending.length})`)
       } catch (err: any) {
@@ -98,7 +93,8 @@ export default class Push extends Command {
       this.error(`Index not found. Run init first.`)
     }
 
-    const index = await this.loadLocalIndex(indexPath)
+    const local = await this.loadLocalIndex(indexPath)
+    const index = this.artifact.toLocalIndex(cwd, local)
     const artifactDir = join(cwd, 'artifacts')
 
     const localFiles = readdirSync(artifactDir, {recursive: true})
@@ -111,16 +107,19 @@ export default class Push extends Command {
     // --------------------------------------------------
     const pendingUpload = localFiles
       .map((key) => {
-        const meta = index.artifacts?.[key]
+        const meta = index.get(key)
+
+        if (!meta) return
 
         return {
           key,
           size: statSync(join(cwd, key)).size,
-          checksum: sha256File(join(cwd, key)),
+          checksum: sha256File(key),
           meta,
         }
       })
       .filter((item) => {
+        if (!item) return false
         if (flags.category && item.meta?.category?.toLowerCase() !== flags.category.toLowerCase()) return false
         if (flags.kind && item.meta?.kind?.toLowerCase() !== flags.kind.toLowerCase()) return false
         if (flags.type && item.meta?.type?.toLowerCase() !== flags.type.toLowerCase()) return false
@@ -136,7 +135,7 @@ export default class Push extends Command {
       return
     }
 
-    const totalSize = pendingUpload.reduce((a, b) => a + (b.size ?? 0), 0) / 1024 / 1024
+    const totalSize = pendingUpload.reduce((a, b) => a + (b?.size ?? 0), 0) / 1024 / 1024
 
     this.log(`${pendingUpload.length} artifacts will be uploaded (${totalSize.toFixed(2)} MB)`)
 
@@ -147,19 +146,14 @@ export default class Push extends Command {
     // --------------------------------------------------
 
     for (const [key, item] of successful) {
-      index.artifacts[key] = {
-        ...index.artifacts?.[key],
-        size: item.size,
-        modified: new Date().toISOString(),
-        kind: item?.kind ?? 'artifact',
-        category: item?.category ?? 'unknown',
-        type: item?.type ?? null,
-      }
+      index.set(key, item)
     }
+
+    if (flags.dry) return
 
     this.log(`Updating index ...`)
     if (!flags.dry) {
-      await writeFile(indexPath, JSON.stringify(index, null, 2))
+      await index.save()
     }
 
     this.log(`Push complete!`)
