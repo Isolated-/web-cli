@@ -1,5 +1,6 @@
 import {Args, Command, Flags} from '@oclif/core'
 import {ArtifactStorage} from '@xgsd/artifact-sdk'
+import {readFile} from 'node:fs/promises'
 
 export default class Build extends Command {
   static override args = {
@@ -28,9 +29,17 @@ export default class Build extends Command {
     const {args, flags} = await this.parse(Build)
 
     const artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
-    this.log(`Rebuilding remote manifest ...`)
+    const latest = await artifact.downloadManifest()
+    const local = JSON.parse(await readFile('artifact.manifest.json', 'utf-8'))
 
-    const manifest = await artifact.publishManifest()
-    this.log(`Finished, version: ${manifest.version}, artifacts: ${manifest.artifacts.length}.`)
+    if (latest.checksum.artifacts !== local.checksum.artifacts) {
+      this.log(`Rebuilding remote manifest ...`)
+
+      const manifest = await artifact.publishManifest()
+      this.log(`Finished, version: ${manifest.version}, artifacts: ${manifest.artifacts.length}.`)
+      return
+    }
+
+    this.log(`Nothing to rebuild, used checksum ${local.checksum.artifacts.slice(0, 8)}.`)
   }
 }

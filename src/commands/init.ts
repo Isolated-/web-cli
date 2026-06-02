@@ -61,6 +61,7 @@ export default class Init extends Command {
           path,
         }
       }),
+      checksum: remote.checksum,
     }
 
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
