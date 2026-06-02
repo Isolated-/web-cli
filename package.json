@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "author": "Michael Palmer",
   "bin": {
-    "art": "./bin/run.js"
+    "web": "./bin/run.js"
   },
   "bugs": "https://github.com/crawler/data-cli/issues",
   "dependencies": {
@@ -46,8 +46,8 @@
   "main": "dist/index.js",
   "type": "module",
   "oclif": {
-    "bin": "art",
-    "dirname": "art-cli",
+    "bin": "web",
+    "dirname": "web-cli",
     "commands": "./dist/commands",
     "plugins": [
       "@oclif/plugin-help"

@@ -7,13 +7,12 @@ import {runPool} from '../util.js'
 
 export default class Push extends Command {
   static override args = {}
-  static override description = 'describe the command here'
+  static override description = 'push local artifacts to remote'
   static override examples = ['<%= config.bin %> <%= command.id %>']
   static override flags = {
     // flag with no value (-f, --force)
     force: Flags.boolean({char: 'f'}),
     // flag with a value (-n, --name=VALUE)
-    name: Flags.string({char: 'n', description: 'name to print'}),
 
     cwd: Flags.string({
       char: 'c',

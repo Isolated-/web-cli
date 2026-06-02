@@ -106,7 +106,7 @@ export default class Init extends Command {
     const hasChanges = manifest.artifacts.some((a: any) => !a.path && !existsSync(join(flags.cwd, a.key)))
 
     if (hasChanges) {
-      this.log(`There are artifacts waiting to be downloaded, use \"$ art fetch\".`)
+      this.log(`There are artifacts waiting to be downloaded, use \"$ web fetch\".`)
     }
 
     this.log(`Initialisation complete.`)

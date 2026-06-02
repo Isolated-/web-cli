@@ -6,16 +6,13 @@ import {dirname, join, relative, resolve} from 'path'
 import {runPool} from '../util.js'
 
 export default class Fetch extends Command {
-  static override args = {
-    file: Args.string({description: 'file to read'}),
-  }
-  static override description = 'describe the command here'
+  static override args = {}
+  static override description = 'fetch latest remote artifacts'
   static override examples = ['<%= config.bin %> <%= command.id %>']
   static override flags = {
     // flag with no value (-f, --force)
     force: Flags.boolean({char: 'f'}),
     // flag with a value (-n, --name=VALUE)
-    name: Flags.string({char: 'n', description: 'name to print'}),
 
     cwd: Flags.string({
       char: 'c',
