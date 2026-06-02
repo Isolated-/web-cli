@@ -1604,13 +1604,10 @@
   resolved "https://registry.yarnpkg.com/@unrs/resolver-binding-win32-x64-msvc/-/resolver-binding-win32-x64-msvc-1.12.2.tgz#72da0da48d72b1e87831b9c0308931d3f4669027"
   integrity sha512-nAB74NfSNKknqQ1RrYj6uz8FcXEomu/MATJZxh/x+BArzN2U3JbOYC0APYzUIGhVY3m5hRxA8VPNdPBoG8txlA==
 
-"@xgsd/artifact-sdk@../artifact-sdk":
+"@xgsd/artifact-sdk@0.2.2":
   version "0.2.2"
-
-"@xgsd/artifact-sdk@^0.2.1":
-  version "0.2.1"
-  resolved "https://registry.yarnpkg.com/@xgsd/artifact-sdk/-/artifact-sdk-0.2.1.tgz#eee82d8b0ec9ba44decae0f7636efaa7f3282a79"
-  integrity sha512-6fBfvseZ9h3gMCkoQvddnoDny2DHBKsaOHrcPDunB5LMc8DVy4FfddQYPDiSDaT9MeqlK5Sp/F9RMO4hD+HN9A==
+  resolved "https://registry.yarnpkg.com/@xgsd/artifact-sdk/-/artifact-sdk-0.2.2.tgz#e0e985b578e9efd7db2aa4ae162bac35fe7afa38"
+  integrity sha512-iQhr/cQS/dMV5w8n3hDYIXwqT9FeGOTBOHPNIA852GabooJh48HO4nhsqJFjsamUHMxO3EpKsIFN+lG1M+2xtA==
 
 abbrev@^4.0.0:
   version "4.0.0"
