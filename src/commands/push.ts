@@ -1,36 +1,15 @@
-import {Command, Flags} from '@oclif/core'
-import {Artifact, ArtifactStorage} from '@xgsd/artifact-sdk'
-import {existsSync, readdirSync, statSync} from 'fs'
-import {mkdir, readFile, writeFile} from 'fs/promises'
-import {dirname, join, relative, resolve} from 'path'
-import {runPool} from '../util.js'
-import {sha256File} from './fetch.js'
+import {Flags} from '@oclif/core'
+import {statSync} from 'fs'
+import {join} from 'path'
+import chalk from 'chalk'
+import {BaseCommand, sha256File} from '../base.js'
+import {parseKey} from '@xgsd/artifact-sdk'
 
-export default class Push extends Command {
+export default class Push extends BaseCommand {
   static override description = 'push local artifacts to remote'
 
   static override flags = {
-    cwd: Flags.string({
-      char: 'c',
-      default: process.cwd(),
-    }),
-
-    dry: Flags.boolean({
-      char: 'd',
-      default: false,
-    }),
-
-    signUrl: Flags.string({
-      char: 'u',
-      env: 'SIGN_URL',
-      required: true,
-    }),
-
-    signToken: Flags.string({
-      char: 't',
-      env: 'SIGN_API_TOKEN',
-      required: true,
-    }),
+    ...BaseCommand.flags,
 
     kind: Flags.string(),
     category: Flags.string(),
@@ -39,82 +18,46 @@ export default class Push extends Command {
     limit: Flags.integer({char: 'n'}),
   }
 
-  artifact!: ArtifactStorage
-
-  async loadLocalIndex(path: string) {
-    return JSON.parse(await readFile(path, 'utf-8'))
-  }
-
-  async uploadArtifacts(cwd: string, pending: any[], dry?: boolean) {
-    const successful = new Map<string, Artifact>()
-    let completed = 0
-    const started = Date.now()
-
-    if (!pending.length) {
-      this.log(`Nothing to upload ...`)
-      return successful
-    }
-
-    await runPool(pending, async (item: any, workerId: any, position: any) => {
-      const filePath = join(cwd, item.key)
-
-      const sizeMb = ((item.size ?? 0) / 1024 / 1024).toFixed(2)
-      this.log(`[worker ${workerId}] (${position}/${pending.length}) uploading ${item.key} (${sizeMb} MB)`)
-
-      try {
-        if (!dry) {
-          await this.artifact.uploadFile(filePath, `crawldb:${item.key}`)
-        }
-
-        completed++
-
-        successful.set(item.key, item.meta)
-
-        this.log(`[worker ${workerId}] ✓ ${item.key} (${completed}/${pending.length})`)
-      } catch (err: any) {
-        this.log(`[worker ${workerId}] ✗ ${item.key} - ${err?.message ?? 'error'}`)
-      }
-    })
-
-    const duration = ((Date.now() - started) / 1000).toFixed(2)
-    this.log(`Upload complete (${successful.size}/${pending.length}) in ${duration}s`)
-
-    return successful
-  }
-
   async run(): Promise<void> {
     const {flags} = await this.parse(Push)
+    await this.initClient(flags)
 
-    const cwd = resolve(flags.cwd)
-    this.artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
+    const started = Date.now()
 
-    const indexPath = join(cwd, 'artifacts.index.json')
-    if (!existsSync(indexPath)) {
-      this.error(`Index not found. Run init first.`)
-    }
+    const index = await this.loadIndex()
+    const localFiles = this.localFiles()
 
-    const local = await this.loadLocalIndex(indexPath)
-    const index = this.artifact.toLocalIndex(cwd, local)
-    const artifactDir = join(cwd, 'artifacts')
-
-    const localFiles = readdirSync(artifactDir, {recursive: true})
-      .map((p) => join(artifactDir, String(p)))
-      .filter((p) => statSync(p).isFile())
-      .map((p) => relative(cwd, p).replace(/\\/g, '/'))
-
-    // --------------------------------------------------
-    // BUILD PUSH LIST (INVERTED LOGIC)
-    // --------------------------------------------------
     const pendingUpload = localFiles
       .map((key) => {
+        const parsed = parseKey(key)
         const meta = index.get(key)
 
-        if (!meta) return
+        const header: any = {
+          key,
+          size: statSync(join(this.cwd, key)).size,
+          checksum: sha256File(join(this.cwd, key)),
+        }
+
+        if (!meta) {
+          return {
+            ...header,
+            checksum: null,
+            meta: {
+              kind: parsed.kind,
+              category: parsed.category,
+              modified: new Date(statSync(join(this.cwd, key)).mtimeMs).toISOString(),
+              size: header.size,
+              type: parsed.type,
+              path: key,
+              checksum: header.checksum,
+            },
+          }
+        }
 
         return {
           key,
-          size: statSync(join(cwd, key)).size,
-          checksum: sha256File(join(cwd, key)),
+          size: statSync(join(this.cwd, key)).size,
+          checksum: sha256File(join(this.cwd, key)),
           meta,
         }
       })
@@ -128,34 +71,28 @@ export default class Push extends Command {
 
         return true
       })
-      .slice(0, flags.limit ?? undefined)
+      .slice(0, flags.limit ?? undefined) as any[]
 
     if (!pendingUpload.length) {
-      this.log(`Nothing to push!`)
+      this.log(chalk.green(`up to date!`))
       return
     }
 
-    const totalSize = pendingUpload.reduce((a, b) => a + (b?.size ?? 0), 0) / 1024 / 1024
+    const successful = await this.transferArtifacts({
+      type: 'upload',
+      artifacts: Object.fromEntries(pendingUpload.map((a) => [a.key, a.meta])),
+      dryRun: flags.dry,
+      simple: flags.simple,
+    })
 
-    this.log(`${pendingUpload.length} artifacts will be uploaded (${totalSize.toFixed(2)} MB)`)
-
-    const successful = await this.uploadArtifacts(cwd, pendingUpload, flags.dry)
-
-    // --------------------------------------------------
-    // UPDATE INDEX AFTER SUCCESS
-    // --------------------------------------------------
-
-    for (const [key, item] of successful) {
-      index.set(key, item)
+    for (const [key, artifact] of successful) {
+      index.set(key, artifact)
     }
 
-    if (flags.dry) return
-
-    this.log(`Updating index ...`)
     if (!flags.dry) {
-      await index.save(indexPath)
+      await index.save(this.indexPath)
     }
 
-    this.log(`Push complete!`)
+    this.done(flags.dry, started)
   }
 }

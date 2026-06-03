@@ -1,7 +1,11 @@
 import {Args, Command, Flags} from '@oclif/core'
-import {ArtifactStorage} from '@xgsd/artifact-sdk'
+import {Artifact, ArtifactStorage} from '@xgsd/artifact-sdk'
+import chalk from 'chalk'
 import {readFile} from 'fs/promises'
 import {join} from 'path'
+import treeify from 'treeify'
+import prettyBytes from 'pretty-bytes'
+import prettyMs from 'pretty-ms'
 
 type ArtifactItem = {
   key: string
@@ -11,6 +15,29 @@ type ArtifactItem = {
   size?: number
   modified?: string
   path?: string | null
+}
+
+function buildTreeFromArtifacts(artifacts: any[]) {
+  const root: Record<string, any> = {}
+
+  for (const artifact of artifacts) {
+    const parts = artifact.key.split('/')
+    let current = root
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      const isLeaf = i === parts.length - 1
+
+      if (isLeaf) {
+        current[`${part} (${prettyBytes(artifact.size)})`] = {}
+      } else {
+        current[part] ??= {}
+        current = current[part]
+      }
+    }
+  }
+
+  return root
 }
 
 export default class Ls extends Command {
@@ -65,66 +92,25 @@ export default class Ls extends Command {
     return true
   }
 
-  private printFlat(items: ArtifactItem[]) {
-    for (const item of items) {
-      const size = item.size ? `${(item.size / 1024).toFixed(1)} KB` : 'unknown'
-
-      this.log(`${item.key}`)
-      this.log(`  ${item.kind}/${item.category}/${item.type} • ${size}`)
-
-      if (item.path) this.log(`  local: ${item.path}`)
-      if (item.modified) this.log(`  modified: ${item.modified}`)
-      this.log('')
-    }
-
-    this.log(`Total: ${items.length}`)
-  }
-
-  private printTree(items: ArtifactItem[]) {
-    const tree = new Map<string, ArtifactItem[]>()
-
-    for (const item of items) {
-      const group = item.category ?? 'unknown'
-
-      if (!tree.has(group)) {
-        tree.set(group, [])
-      }
-
-      tree.get(group)!.push(item)
-    }
-
-    for (const [group, groupItems] of tree) {
-      this.log(`\n${group}/`)
-
-      for (const item of groupItems) {
-        const missing = item.path ? '' : ' (missing)'
-        this.log(`  - ${item.key}${missing}`)
-      }
-    }
-
-    this.log(`\nTotal: ${items.length}`)
-  }
-
   public async run(): Promise<void> {
     const {args, flags} = await this.parse(Ls)
-
+    const started = Date.now()
     const artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
 
     const raw = await this.loadLocalIndex(join(flags.cwd, 'artifacts.index.json'))
 
     const index = artifact.toLocalIndex(flags.cwd, raw)
-
     const items = index.query((a: any) => this.filterItem(a, flags, args.category))
 
-    if (!items.length) {
-      this.log('No artifacts found')
+    if (items.length === 0) {
+      this.log(chalk.green('no artifacts found'))
       return
     }
 
-    if (flags.tree) {
-      this.printTree(items as any)
-    } else {
-      this.printFlat(items as any)
-    }
+    const tree = buildTreeFromArtifacts(items)
+    this.log(chalk.blue(treeify.asTree(tree, true, true)))
+
+    const duration = Date.now() - started
+    this.log(chalk.green(`done in ${prettyMs(duration)}!`))
   }
 }

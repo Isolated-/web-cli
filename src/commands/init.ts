@@ -1,93 +1,39 @@
-import {Args, Command, Flags} from '@oclif/core'
 import {existsSync, readFileSync} from 'fs'
-import {mkdir, readFile, rm, writeFile} from 'fs/promises'
-import {dirname, join, relative, resolve} from 'path'
-import {Artifact, ArtifactIndex, ArtifactStorage} from '@xgsd/artifact-sdk'
+import {Index} from '@xgsd/artifact-sdk'
+import chalk from 'chalk'
+import ora, {Ora} from 'ora'
+import {BaseCommand} from '../base.js'
 
-export default class Init extends Command {
-  static override args = {
-    file: Args.string({description: 'file to read'}),
-  }
+export default class Init extends BaseCommand {
+  static override args = {}
+  static enableJsonFlag: boolean = true
   static override description = 'initialise artifact storage in your cwd'
   static override examples = ['<%= config.bin %> <%= command.id %>']
-  static override flags = {
-    // flag with no value (-f, --force)
-    force: Flags.boolean({char: 'f'}),
 
-    cwd: Flags.string({
-      char: 'c',
-      description: 'current working directory',
-      default: process.cwd(),
-    }),
+  public async run() {
+    const {flags} = await this.parse(Init)
+    await this.initClient(flags)
 
-    remote: Flags.boolean({
-      char: 'r',
-      description: 'when true, the remote manifest will always be obtained',
-    }),
+    const started = Date.now()
 
-    signUrl: Flags.string({
-      char: 'u',
-      env: 'SIGN_URL',
-      required: true,
-    }),
-
-    signToken: Flags.string({
-      char: 't',
-      env: 'SIGN_API_TOKEN',
-      required: true,
-    }),
-  }
-
-  artifact!: ArtifactStorage
-
-  public async loadLocalIndex(path: string) {
-    const content = await readFile(path, 'utf-8')
-    return JSON.parse(content)
-  }
-
-  async getRemoteIndex() {
-    try {
-      return await this.artifact.getIndex()
-    } catch {
-      return null
-    }
-  }
-
-  public async run(): Promise<void> {
-    const {args, flags} = await this.parse(Init)
-
-    const absoluteBasePath = resolve(flags.cwd)
-    const indexPath = join(absoluteBasePath, 'artifacts.index.json')
-
-    this.artifact = new ArtifactStorage(flags.signUrl, flags.signToken)
-
-    let index: ArtifactIndex | null = null
-    if (existsSync(indexPath)) {
-      index = await this.loadLocalIndex(indexPath)
+    let index: Index | null = null
+    const spinner = ora(chalk.gray('loading index ...')).start()
+    if (existsSync(this.indexPath)) {
+      index = await this.loadIndex()
     } else {
-      index = await this.getRemoteIndex()
+      index = await this.loadRemoteIndex()
     }
 
     if (!index) {
-      this.error(`unable to obtain local or remote index`)
+      spinner.fail()
+      this.error(chalk.red(`unable to obtain local or remote index`))
     }
 
-    const local = this.artifact.toLocalIndex(absoluteBasePath, index)
-
-    let total = 0
-    const pending = local
-      .query((a) => !a.path || !existsSync(a.path))
-      .map((a) => {
-        total++
-        return a.size
-      })
-      .reduce((p, c) => 0 + p + c)
-
-    if (pending > 0) {
-      this.log(`You have ${total} downloads pending (${(pending / 1024 / 1024).toFixed(2)} MB)`)
+    spinner.succeed()
+    if (!flags.dry) {
+      await index.save(this.indexPath)
     }
 
-    await local.save(indexPath)
-    this.log('Everything complete!')
+    this.done(flags.dry, started)
   }
 }
